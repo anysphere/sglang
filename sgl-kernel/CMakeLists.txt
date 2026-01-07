@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.26 FATAL_ERROR)
 project(sgl-kernel LANGUAGES CXX CUDA)
 
+# =============================================================================
+# Minimal build option - only builds cutlass_mla kernel
+# Usage: cmake -DSGL_KERNEL_MINIMAL_MLA=ON ...
+# =============================================================================
+option(SGL_KERNEL_MINIMAL_MLA "Build only cutlass_mla kernel (minimal build)" OFF)
+
+if(SGL_KERNEL_MINIMAL_MLA)
+    message(STATUS "========================================")
+    message(STATUS "MINIMAL BUILD: Only cutlass_mla enabled")
+    message(STATUS "========================================")
+endif()
+
 # utils
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 include(FetchContent)
@@ -43,7 +55,7 @@ find_package(Torch REQUIRED)
 clear_cuda_arches(CMAKE_FLAG)
 
 # Third Party repos
-# cutlass
+# cutlass (always needed)
 FetchContent_Declare(
     repo-cutlass
     GIT_REPOSITORY https://github.com/NVIDIA/cutlass
@@ -51,6 +63,9 @@ FetchContent_Declare(
     GIT_SHALLOW    OFF
 )
 FetchContent_Populate(repo-cutlass)
+
+# Skip fetching other repos for minimal build
+if(NOT SGL_KERNEL_MINIMAL_MLA)
 
 # DeepGEMM
 FetchContent_Declare(
@@ -114,6 +129,8 @@ FetchContent_Declare(
     GIT_SHALLOW OFF
 )
 FetchContent_Populate(repo-fast-hadamard-transform)
+
+endif() # NOT SGL_KERNEL_MINIMAL_MLA
 
 # ccache option
 option(ENABLE_CCACHE "Whether to use ccache" ON)
@@ -264,134 +281,122 @@ if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_FP4)
     )
 endif()
 
-# All source files
-# NOTE: Please sort the filenames alphabetically
-set(SOURCES
-    "csrc/allreduce/custom_all_reduce.cu"
-    "csrc/allreduce/mscclpp_allreduce.cu"
-    "csrc/attention/cascade.cu"
-    "csrc/attention/cutlass_mla_kernel.cu"
-    "csrc/attention/merge_attn_states.cu"
-    "csrc/attention/vertical_slash_index.cu"
-    "csrc/common_extension.cc"
-    "csrc/elementwise/activation.cu"
-    "csrc/elementwise/cast.cu"
-    "csrc/elementwise/concat_mla.cu"
-    "csrc/elementwise/copy.cu"
-    "csrc/elementwise/fused_add_rms_norm_kernel.cu"
-    "csrc/elementwise/rope.cu"
-    "csrc/elementwise/pos_enc.cu"
-    "csrc/elementwise/topk.cu"
-    "csrc/sgl_diffusion/elementwise/timestep_embedding.cu"
-    "csrc/expert_specialization/es_fp8_blockwise.cu"
-    "csrc/expert_specialization/es_sm100_mxfp8_blockscaled.cu"
-    "csrc/expert_specialization/es_sm100_mxfp8_blockscaled_group_quant.cu"
+# =============================================================================
+# Source files - conditional on minimal build
+# =============================================================================
+if(SGL_KERNEL_MINIMAL_MLA)
+    # Minimal build: only cutlass_mla
+    set(SOURCES
+        "csrc/attention/cutlass_mla_kernel.cu"
+        "csrc/common_extension.cc"
+    )
+    set(INCLUDES
+        ${repo-cutlass_SOURCE_DIR}/include
+        ${repo-cutlass_SOURCE_DIR}/tools/util/include
+        ${repo-cutlass_SOURCE_DIR}/examples/77_blackwell_fmha
+        ${repo-cutlass_SOURCE_DIR}/examples/common
+    )
+else()
+    # Full build: all source files
+    # NOTE: Please sort the filenames alphabetically
+    set(SOURCES
+        "csrc/allreduce/custom_all_reduce.cu"
+        "csrc/allreduce/mscclpp_allreduce.cu"
+        "csrc/attention/cascade.cu"
+        "csrc/attention/cutlass_mla_kernel.cu"
+        "csrc/attention/merge_attn_states.cu"
+        "csrc/attention/vertical_slash_index.cu"
+        "csrc/common_extension.cc"
+        "csrc/elementwise/activation.cu"
+        "csrc/elementwise/cast.cu"
+        "csrc/elementwise/concat_mla.cu"
+        "csrc/elementwise/copy.cu"
+        "csrc/elementwise/fused_add_rms_norm_kernel.cu"
+        "csrc/elementwise/rope.cu"
+        "csrc/elementwise/pos_enc.cu"
+        "csrc/elementwise/topk.cu"
+        "csrc/sgl_diffusion/elementwise/timestep_embedding.cu"
+        "csrc/expert_specialization/es_fp8_blockwise.cu"
+        "csrc/expert_specialization/es_sm100_mxfp8_blockscaled.cu"
+        "csrc/expert_specialization/es_sm100_mxfp8_blockscaled_group_quant.cu"
 
-    "csrc/gemm/awq_kernel.cu"
-    "csrc/gemm/bmm_fp8.cu"
-    "csrc/gemm/dsv3_fused_a_gemm.cu"
-    "csrc/gemm/dsv3_router_gemm_bf16_out.cu"
-    "csrc/gemm/dsv3_router_gemm_entry.cu"
-    "csrc/gemm/dsv3_router_gemm_float_out.cu"
-    "csrc/gemm/fp8_blockwise_gemm_kernel.cu"
-    "csrc/gemm/fp8_gemm_kernel.cu"
-    "csrc/gemm/int8_gemm_kernel.cu"
-    "csrc/gemm/nvfp4_expert_quant.cu"
-    "csrc/gemm/nvfp4_quant_entry.cu"
-    "csrc/gemm/nvfp4_quant_kernels.cu"
-    "csrc/gemm/nvfp4_scaled_mm_entry.cu"
-    "csrc/gemm/nvfp4_scaled_mm_kernels.cu"
-    "csrc/gemm/per_tensor_quant_fp8.cu"
-    "csrc/gemm/per_token_group_quant_8bit.cu"
-    "csrc/gemm/per_token_group_quant_8bit_v2.cu"
-    "csrc/gemm/per_token_quant_fp8.cu"
-    "csrc/gemm/qserve_w4a8_per_chn_gemm.cu"
-    "csrc/gemm/qserve_w4a8_per_group_gemm.cu"
-    "csrc/gemm/marlin/gptq_marlin.cu"
-    "csrc/gemm/marlin/gptq_marlin_repack.cu"
-    "csrc/gemm/marlin/awq_marlin_repack.cu"
-    "csrc/gemm/gptq/gptq_kernel.cu"
-    "csrc/grammar/apply_token_bitmask_inplace_cuda.cu"
+        "csrc/gemm/awq_kernel.cu"
+        "csrc/gemm/bmm_fp8.cu"
+        "csrc/gemm/dsv3_fused_a_gemm.cu"
+        "csrc/gemm/dsv3_router_gemm_bf16_out.cu"
+        "csrc/gemm/dsv3_router_gemm_entry.cu"
+        "csrc/gemm/dsv3_router_gemm_float_out.cu"
+        "csrc/gemm/fp8_blockwise_gemm_kernel.cu"
+        "csrc/gemm/fp8_gemm_kernel.cu"
+        "csrc/gemm/int8_gemm_kernel.cu"
+        "csrc/gemm/nvfp4_expert_quant.cu"
+        "csrc/gemm/nvfp4_quant_entry.cu"
+        "csrc/gemm/nvfp4_quant_kernels.cu"
+        "csrc/gemm/nvfp4_scaled_mm_entry.cu"
+        "csrc/gemm/nvfp4_scaled_mm_kernels.cu"
+        "csrc/gemm/per_tensor_quant_fp8.cu"
+        "csrc/gemm/per_token_group_quant_8bit.cu"
+        "csrc/gemm/per_token_group_quant_8bit_v2.cu"
+        "csrc/gemm/per_token_quant_fp8.cu"
+        "csrc/gemm/qserve_w4a8_per_chn_gemm.cu"
+        "csrc/gemm/qserve_w4a8_per_group_gemm.cu"
+        "csrc/gemm/marlin/gptq_marlin.cu"
+        "csrc/gemm/marlin/gptq_marlin_repack.cu"
+        "csrc/gemm/marlin/awq_marlin_repack.cu"
+        "csrc/gemm/gptq/gptq_kernel.cu"
+        "csrc/grammar/apply_token_bitmask_inplace_cuda.cu"
 
-    "csrc/kvcacheio/transfer.cu"
-    "csrc/mamba/causal_conv1d.cu"
-    "csrc/memory/store.cu"
-    "csrc/memory/weak_ref_tensor.cpp"
+        "csrc/kvcacheio/transfer.cu"
+        "csrc/mamba/causal_conv1d.cu"
+        "csrc/memory/store.cu"
+        "csrc/memory/weak_ref_tensor.cpp"
 
-    "csrc/moe/cutlass_moe/w4a8/scaled_mm_entry.cu"
-    "csrc/moe/cutlass_moe/w4a8/w4a8_moe_data.cu"
-    "csrc/moe/cutlass_moe/w4a8/w4a8_grouped_mm_c3x.cu"
-    "csrc/moe/marlin_moe_wna16/ops.cu"
-    "csrc/moe/moe_align_kernel.cu"
-    "csrc/moe/moe_fused_gate.cu"
-    "csrc/moe/fused_qknorm_rope_kernel.cu"
-    "csrc/moe/kimi_k2_moe_fused_gate.cu"
-    "csrc/moe/moe_sum.cu"
-    "csrc/moe/moe_sum_reduce.cu"
-    "csrc/moe/moe_topk_softmax_kernels.cu"
-    "csrc/moe/moe_topk_sigmoid_kernels.cu"
-    "csrc/moe/nvfp4_blockwise_moe.cu"
-    "csrc/moe/fp8_blockwise_moe_kernel.cu"
-    "csrc/moe/prepare_moe_input.cu"
+        "csrc/moe/cutlass_moe/w4a8/scaled_mm_entry.cu"
+        "csrc/moe/cutlass_moe/w4a8/w4a8_moe_data.cu"
+        "csrc/moe/cutlass_moe/w4a8/w4a8_grouped_mm_c3x.cu"
+        "csrc/moe/marlin_moe_wna16/ops.cu"
+        "csrc/moe/moe_align_kernel.cu"
+        "csrc/moe/moe_fused_gate.cu"
+        "csrc/moe/fused_qknorm_rope_kernel.cu"
+        "csrc/moe/kimi_k2_moe_fused_gate.cu"
+        "csrc/moe/moe_sum.cu"
+        "csrc/moe/moe_sum_reduce.cu"
+        "csrc/moe/moe_topk_softmax_kernels.cu"
+        "csrc/moe/moe_topk_sigmoid_kernels.cu"
+        "csrc/moe/nvfp4_blockwise_moe.cu"
+        "csrc/moe/fp8_blockwise_moe_kernel.cu"
+        "csrc/moe/prepare_moe_input.cu"
 
-    "csrc/quantization/gguf/gguf_kernel.cu"
-    "csrc/speculative/eagle_utils.cu"
-    "csrc/speculative/ngram_utils.cu"
-    "csrc/speculative/packbit.cu"
-    "csrc/speculative/speculative_sampling.cu"
+        "csrc/quantization/gguf/gguf_kernel.cu"
+        "csrc/speculative/eagle_utils.cu"
+        "csrc/speculative/ngram_utils.cu"
+        "csrc/speculative/packbit.cu"
+        "csrc/speculative/speculative_sampling.cu"
 
-    "${repo-flashinfer_SOURCE_DIR}/csrc/norm.cu"
-    "${repo-flashinfer_SOURCE_DIR}/csrc/renorm.cu"
-    "${repo-flashinfer_SOURCE_DIR}/csrc/sampling.cu"
+        "${repo-flashinfer_SOURCE_DIR}/csrc/norm.cu"
+        "${repo-flashinfer_SOURCE_DIR}/csrc/renorm.cu"
+        "${repo-flashinfer_SOURCE_DIR}/csrc/sampling.cu"
 
-    "${repo-fast-hadamard-transform_SOURCE_DIR}/csrc/fast_hadamard_transform_cuda.cu"
-    "${repo-fast-hadamard-transform_SOURCE_DIR}/csrc/fast_hadamard_transform.cpp"
+        "${repo-fast-hadamard-transform_SOURCE_DIR}/csrc/fast_hadamard_transform_cuda.cu"
+        "${repo-fast-hadamard-transform_SOURCE_DIR}/csrc/fast_hadamard_transform.cpp"
 
-    "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_bf16_causal_sm80.cu"
-    "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_bf16_sm80.cu"
-    "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_fp16_causal_sm80.cu"
-    "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_fp16_sm80.cu"
-    "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/flash_sparse_api.cpp"
-)
-
-set(INCLUDES
-    ${repo-cutlass_SOURCE_DIR}/include
-    ${repo-cutlass_SOURCE_DIR}/tools/util/include
-    ${repo-flashinfer_SOURCE_DIR}/include
-    ${repo-flashinfer_SOURCE_DIR}/csrc
-    ${repo-mscclpp_SOURCE_DIR}/include
-    ${repo-cutlass_SOURCE_DIR}/examples/77_blackwell_fmha
-    ${repo-cutlass_SOURCE_DIR}/examples/common
-    ${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src
-)
-
-# =========================== Common SM90 Build ============================= #
-# Build SM90 library with fast math optimization (same namespace, different directory)
-Python_add_library(common_ops_sm90_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
-
-target_compile_options(common_ops_sm90_build PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS} -use_fast_math>
-)
-target_include_directories(common_ops_sm90_build PRIVATE ${INCLUDES})
-# Set output name and separate build directory to avoid conflicts
-set_target_properties(common_ops_sm90_build PROPERTIES
-    OUTPUT_NAME "common_ops"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm90"
-)
-
-# =========================== Common SM100+ Build ============================= #
-# Build SM100+ library with precise math (same namespace, different directory)
-Python_add_library(common_ops_sm100_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
-
-target_compile_options(common_ops_sm100_build PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS}>
-)
-target_include_directories(common_ops_sm100_build PRIVATE ${INCLUDES})
-# Set output name and separate build directory to avoid conflicts
-set_target_properties(common_ops_sm100_build PROPERTIES
-    OUTPUT_NAME "common_ops"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm100"
-)
+        "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_bf16_causal_sm80.cu"
+        "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_bf16_sm80.cu"
+        "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_fp16_causal_sm80.cu"
+        "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src/flash_fwd_sparse_hdim128_fp16_sm80.cu"
+        "${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/flash_sparse_api.cpp"
+    )
+    set(INCLUDES
+        ${repo-cutlass_SOURCE_DIR}/include
+        ${repo-cutlass_SOURCE_DIR}/tools/util/include
+        ${repo-flashinfer_SOURCE_DIR}/include
+        ${repo-flashinfer_SOURCE_DIR}/csrc
+        ${repo-mscclpp_SOURCE_DIR}/include
+        ${repo-cutlass_SOURCE_DIR}/examples/77_blackwell_fmha
+        ${repo-cutlass_SOURCE_DIR}/examples/common
+        ${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src
+    )
+endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 execute_process(
@@ -409,37 +414,104 @@ else()
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=1")
 endif()
 
-# mscclpp option
-set(MSCCLPP_USE_CUDA ON)
-set(MSCCLPP_BYPASS_GPU_CHECK ON)
-set(MSCCLPP_BUILD_TESTS OFF)
-add_subdirectory(
-    ${repo-mscclpp_SOURCE_DIR}
-    ${CMAKE_CURRENT_BINARY_DIR}/mscclpp-build
-)
+# =============================================================================
+# Build targets - conditional on minimal build
+# =============================================================================
+if(SGL_KERNEL_MINIMAL_MLA)
+    # =========================== Minimal Build: Single Target ============================= #
+    # Minimal CUDA flags - only SM100a (cutlass_mla requires SM100), fewer threads to avoid OOM
+    set(SGL_KERNEL_MINIMAL_CUDA_FLAGS
+        "-DNDEBUG"
+        "-O3"
+        "-Xcompiler"
+        "-fPIC"
+        "-gencode=arch=compute_100a,code=sm_100a"
+        "-std=c++17"
+        "-DCUTE_USE_PACKED_TUPLE=1"
+        "-DCUTLASS_ENABLE_TENSOR_CORE_MMA=1"
+        "-DCUTLASS_VERSIONS_GENERATED"
+        "-DCUTLASS_TEST_LEVEL=0"
+        "-DCUTLASS_DEBUG_TRACE_LEVEL=0"
+        "--expt-relaxed-constexpr"
+        "--expt-extended-lambda"
+        "-Xcompiler=-Wno-deprecated-declarations"
+        "-Xcompiler=-Wfatal-errors"
+        "-Xcudafe=--diag_suppress=177"
+        "--threads=4"
+    )
 
-target_link_libraries(common_ops_sm90_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
-target_link_libraries(common_ops_sm100_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
+    Python_add_library(common_ops MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
+    target_compile_options(common_ops PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_MINIMAL_CUDA_FLAGS}>
+    )
+    target_compile_definitions(common_ops PRIVATE SGL_KERNEL_MINIMAL_MLA)
+    target_include_directories(common_ops PRIVATE ${INCLUDES})
+    target_link_libraries(common_ops PRIVATE ${TORCH_LIBRARIES} c10 cuda)
+    install(TARGETS common_ops LIBRARY DESTINATION sgl_kernel)
 
-# sparse flash attention
-target_compile_definitions(common_ops_sm90_build PRIVATE
-    FLASHATTENTION_DISABLE_BACKWARD
-    FLASHATTENTION_DISABLE_DROPOUT
-    FLASHATTENTION_DISABLE_UNEVEN_K
-)
-target_compile_definitions(common_ops_sm100_build PRIVATE
-    FLASHATTENTION_DISABLE_BACKWARD
-    FLASHATTENTION_DISABLE_DROPOUT
-    FLASHATTENTION_DISABLE_UNEVEN_K
-)
+else()
+    # =========================== Full Build ============================= #
 
-# Install to different subdirectories
-# CMake will find the built libraries in their respective LIBRARY_OUTPUT_DIRECTORY locations
-# and install them to the specified destinations
-install(TARGETS common_ops_sm90_build LIBRARY DESTINATION sgl_kernel/sm90)
-install(TARGETS common_ops_sm100_build LIBRARY DESTINATION sgl_kernel/sm100)
+    # =========================== Common SM90 Build ============================= #
+    # Build SM90 library with fast math optimization (same namespace, different directory)
+    Python_add_library(common_ops_sm90_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
+
+    target_compile_options(common_ops_sm90_build PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS} -use_fast_math>
+    )
+    target_include_directories(common_ops_sm90_build PRIVATE ${INCLUDES})
+    # Set output name and separate build directory to avoid conflicts
+    set_target_properties(common_ops_sm90_build PROPERTIES
+        OUTPUT_NAME "common_ops"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm90"
+    )
+
+    # =========================== Common SM100+ Build ============================= #
+    # Build SM100+ library with precise math (same namespace, different directory)
+    Python_add_library(common_ops_sm100_build MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SOABI ${SOURCES})
+
+    target_compile_options(common_ops_sm100_build PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:${SGL_KERNEL_CUDA_FLAGS}>
+    )
+    target_include_directories(common_ops_sm100_build PRIVATE ${INCLUDES})
+    # Set output name and separate build directory to avoid conflicts
+    set_target_properties(common_ops_sm100_build PROPERTIES
+        OUTPUT_NAME "common_ops"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sm100"
+    )
+
+    # mscclpp option
+    set(MSCCLPP_USE_CUDA ON)
+    set(MSCCLPP_BYPASS_GPU_CHECK ON)
+    set(MSCCLPP_BUILD_TESTS OFF)
+    add_subdirectory(
+        ${repo-mscclpp_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/mscclpp-build
+    )
+
+    target_link_libraries(common_ops_sm90_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
+    target_link_libraries(common_ops_sm100_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
+
+    # sparse flash attention
+    target_compile_definitions(common_ops_sm90_build PRIVATE
+        FLASHATTENTION_DISABLE_BACKWARD
+        FLASHATTENTION_DISABLE_DROPOUT
+        FLASHATTENTION_DISABLE_UNEVEN_K
+    )
+    target_compile_definitions(common_ops_sm100_build PRIVATE
+        FLASHATTENTION_DISABLE_BACKWARD
+        FLASHATTENTION_DISABLE_DROPOUT
+        FLASHATTENTION_DISABLE_UNEVEN_K
+    )
+
+    # Install to different subdirectories
+    # CMake will find the built libraries in their respective LIBRARY_OUTPUT_DIRECTORY locations
+    # and install them to the specified destinations
+    install(TARGETS common_ops_sm90_build LIBRARY DESTINATION sgl_kernel/sm90)
+    install(TARGETS common_ops_sm100_build LIBRARY DESTINATION sgl_kernel/sm100)
 
 # ============================ Optional Install: FA3 ============================= #
+# (Only for full build)
 # set flash-attention sources file
 # Now FA3 support sm80/sm86/sm90
 if (SGL_KERNEL_ENABLE_FA3)
@@ -633,3 +705,5 @@ if ("${CUDA_VERSION}" VERSION_GREATER_EQUAL "12.8" OR SGL_KERNEL_ENABLE_SM100A)
             PATTERN "__pycache__" EXCLUDE)
 
 endif()
+
+endif() # NOT SGL_KERNEL_MINIMAL_MLA (closes the else() block for full build)

@@ -16,9 +16,41 @@ limitations under the License.
 #include <torch/all.h>
 #include <torch/library.h>
 
+#ifndef SGL_KERNEL_MINIMAL_MLA
 #include "sgl_kernel_ops.h"
+#else
+// Minimal build: only declare cutlass_mla functions
+#include <Python.h>
+void cutlass_mla_decode(
+    torch::Tensor const& out,
+    torch::Tensor const& q_nope,
+    torch::Tensor const& q_pe,
+    torch::Tensor const& kv_c_and_k_pe_cache,
+    torch::Tensor const& seq_lens,
+    torch::Tensor const& page_table,
+    torch::Tensor const& workspace,
+    double sm_scale,
+    int64_t num_kv_splits);
+int64_t cutlass_mla_get_workspace_size(
+    int64_t max_seq_len,
+    int64_t num_batches,
+    int64_t sm_count,
+    int64_t num_kv_splits);
+
+// REGISTER_EXTENSION macro for minimal build
+#define _CONCAT(A, B) A##B
+#define CONCAT(A, B) _CONCAT(A, B)
+#define _STRINGIFY(A) #A
+#define STRINGIFY(A) _STRINGIFY(A)
+#define REGISTER_EXTENSION(NAME)                                                                      \
+  PyMODINIT_FUNC CONCAT(PyInit_, NAME)() {                                                            \
+    static struct PyModuleDef module = {PyModuleDef_HEAD_INIT, STRINGIFY(NAME), nullptr, 0, nullptr}; \
+    return PyModule_Create(&module);                                                                  \
+  }
+#endif
 
 TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
+#ifndef SGL_KERNEL_MINIMAL_MLA
   /*
    * From csrc/allreduce
    */
@@ -54,11 +86,16 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   m.impl("merge_state", torch::kCUDA, &merge_state);
   m.def("merge_state_v2(Tensor v_a, Tensor s_a, Tensor v_b, Tensor s_b, Tensor! v_merged, Tensor! s_merged) -> ()");
   m.impl("merge_state_v2", torch::kCUDA, &merge_state_v2);
+#endif // SGL_KERNEL_MINIMAL_MLA
+
+  // cutlass_mla ops - always registered
   m.def(
       "cutlass_mla_decode(Tensor! out, Tensor q_nope, Tensor q_pe, Tensor kv_c_and_k_pe_cache, Tensor seq_lens, Tensor "
       "page_table, Tensor! workspace, float sm_scale, int num_kv_splits) -> ()");
   m.impl("cutlass_mla_decode", torch::kCUDA, &cutlass_mla_decode);
   m.def("cutlass_mla_get_workspace_size", &cutlass_mla_get_workspace_size);
+
+#ifndef SGL_KERNEL_MINIMAL_MLA
 
   /*
    * From csrc/elementwise
@@ -622,6 +659,7 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "float scale,"
       "int max_period) -> Tensor");
   m.impl("timestep_embedding", torch::kCUDA, &timestep_embedding);
+#endif // SGL_KERNEL_MINIMAL_MLA
 }
 
 REGISTER_EXTENSION(common_ops)
